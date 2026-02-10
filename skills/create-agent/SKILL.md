@@ -1,67 +1,122 @@
 ---
 name: create-agent
-description: Bootstrap a modular AI agent with OpenRouter SDK, extensible hooks, and optional Ink TUI
+description: Bootstrap a CLI coding agent with OpenRouter SDK callModel() API, Zod tools, and Ink TUI
 metadata:
-  version: 0.0.0
+  version: 0.3.0
   homepage: https://openrouter.ai
 ---
 
-# Build a Modular AI Agent with OpenRouter
+# Build a Modular AI Coding Agent with OpenRouter
 
-This skill helps you create a **modular AI agent** with:
+This skill helps you create a **terminal-based coding agent**. Unlike simple chatbots, this agent can:
 
-- **Standalone Agent Core** - Runs independently, extensible via hooks
-- **OpenRouter SDK** - Unified access to 300+ language models
-- **Optional Ink TUI** - Beautiful terminal UI (separate from agent logic)
+- **Read & Write Files** - Modify your codebase directly
+- **Edit Files** - Targeted find-and-replace edits
+- **Execute Shell Commands** - Run tests, installs, and builds
+- **Browse the Web** - Fetch documentation and search the internet
+- **Look Good** - Includes a modern Ink-based Terminal UI (TUI)
+- **OpenRouter SDK callModel()** - Automatic tool execution with items-based streaming
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────┐
-│                    Your Application                 │
-├─────────────────────────────────────────────────────┤
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  │
-│  │   Ink TUI   │  │  HTTP API   │  │   Discord   │  │
-│  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘  │
-│         │                │                │         │
-│         └────────────────┼────────────────┘         │
-│                          ▼                          │
-│              ┌───────────────────────┐              │
-│              │      Agent Core       │              │
-│              │  (hooks & lifecycle)  │              │
-│              └───────────┬───────────┘              │
-│                          ▼                          │
-│              ┌───────────────────────┐              │
-│              │    OpenRouter SDK     │              │
-│              └───────────────────────┘              │
-└─────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────┐
+│                   cli.tsx (TUI)                  │
+│         Ink React components + events            │
+├─────────────────────────────────────────────────┤
+│                  agent.ts (Core)                 │
+│  OpenRouter SDK callModel() + getItemsStream()   │
+│  EventEmitter for UI hooks                       │
+├─────────────────────────────────────────────────┤
+│                 tools.ts (Tools)                 │
+│  7 Zod-schema tools with callbacks               │
+│  list_files, read_file, edit_file, write_file,   │
+│  run_command, fetch_web_page, web_search         │
+└─────────────────────────────────────────────────┘
 ```
+
+**How it works:**
+1. Agent calls `callModel()` with tools
+2. SDK automatically validates args with Zod, executes tools, sends results back to model
+3. SDK repeats until the model stops calling tools
+4. `getItemsStream()` streams all items (messages, tool calls, results) to the TUI
+5. Tool callbacks emit events for the UI's tool indicators
 
 ## Prerequisites
 
+> [!IMPORTANT]
+> **Node.js 18.x or 20.x required.**
+
 Get an OpenRouter API key at: https://openrouter.ai/settings/keys
 
-⚠️ **Security:** Never commit API keys. Use environment variables.
+> [!CAUTION]
+> **Dependency Safety Rules (MUST follow):**
+> - Use ONLY the exact dependency versions listed in the package.json below
+> - Do NOT add `cheerio`, `undici`, or any package with native bindings — these frequently break across Node versions
+> - For HTML parsing, use the built-in regex-based `htmlToText()` helper in tools.ts — no external HTML parser needed
+> - After `npm install`, verify zero errors by running `npm start` before considering setup complete
 
 ## Project Setup
 
 ### Step 1: Initialize Project
 
 ```bash
-mkdir my-agent && cd my-agent
+mkdir my-coding-agent && cd my-coding-agent
 npm init -y
 npm pkg set type="module"
+mkdir src
 ```
 
-### Step 2: Install Dependencies
+### Step 2: Create package.json
+
+Replace your `package.json` with this exact content for guaranteed compatibility:
+
+```json
+{
+  "name": "my-coding-agent",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/cli.tsx",
+    "start:headless": "tsx src/headless.ts",
+    "dev": "tsx watch src/cli.tsx"
+  },
+  "dependencies": {
+    "@openrouter/sdk": "^0.8.0",
+    "dotenv": "^16.4.5",
+    "eventemitter3": "^5.0.4",
+    "glob": "^10.4.5",
+    "ink": "^4.4.1",
+    "react": "^18.3.1",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/react": "^18.3.28",
+    "tsx": "^4.21.0",
+    "typescript": "^5.5.0"
+  }
+}
+```
+
+Then install:
 
 ```bash
-npm install @openrouter/sdk zod eventemitter3
-npm install ink react  # Optional: only for TUI
-npm install -D typescript @types/react tsx
+npm install
 ```
 
-### Step 3: Create tsconfig.json
+### Step 3: Create .env file
+
+Create a `.env` file in the project root with your API key:
+
+```
+OPENROUTER_API_KEY=your-key-here
+```
+
+> [!CAUTION]
+> Add `.env` to your `.gitignore` to avoid committing secrets!
+
+### Step 4: Create tsconfig.json
 
 ```json
 {
@@ -79,177 +134,163 @@ npm install -D typescript @types/react tsx
 }
 ```
 
-### Step 4: Add Scripts to package.json
-
-```json
-{
-  "scripts": {
-    "start": "tsx src/cli.tsx",
-    "start:headless": "tsx src/headless.ts",
-    "dev": "tsx watch src/cli.tsx"
-  }
-}
-```
-
 ## File Structure
 
-```bash
+```
 src/
-├── agent.ts        # Standalone agent core with hooks
-├── tools.ts        # Tool definitions
-├── cli.tsx         # Ink TUI (optional interface)
-└── headless.ts     # Headless usage example
+├── agent.ts        # Core: callModel() with automatic tool execution & event emitter
+├── tools.ts        # 7 Zod-schema tools with callbacks for UI events
+├── cli.tsx         # Ink TUI: ASCII banner, streaming, tool indicators
+└── headless.ts     # readline-based CLI mode
 ```
 
-## Step 1: Agent Core with Hooks
+---
 
-Create `src/agent.ts` - the standalone agent that can run anywhere:
+## Implementation
+
+### Step 5: Create src/agent.ts
+
+The agent uses `callModel()` which handles the entire tool execution loop internally. No manual while loop needed — the SDK validates tool args with Zod, executes tools, and re-queries the model automatically. We use `getItemsStream()` to see all items (messages, tool calls, results) as they happen.
 
 ```typescript
-import { OpenRouter, tool, stepCountIs } from '@openrouter/sdk';
-import type { Tool, StopCondition, StreamableOutputItem } from '@openrouter/sdk';
+import { OpenRouter } from '@openrouter/sdk';
 import { EventEmitter } from 'eventemitter3';
-import { z } from 'zod';
+import { createTools } from './tools.js';
 
 // Message types
 export interface Message {
-  role: 'user' | 'assistant' | 'system';
+  role: 'user' | 'assistant';
   content: string;
 }
 
-// Agent events for hooks (items-based streaming model)
+// Agent events
 export interface AgentEvents {
   'message:user': (message: Message) => void;
   'message:assistant': (message: Message) => void;
-  'item:update': (item: StreamableOutputItem) => void;  // Items emitted with same ID, replace by ID
   'stream:start': () => void;
   'stream:delta': (delta: string, accumulated: string) => void;
   'stream:end': (fullText: string) => void;
   'tool:call': (name: string, args: unknown) => void;
   'tool:result': (name: string, result: unknown) => void;
-  'reasoning:update': (text: string) => void;  // Extended thinking content
   'error': (error: Error) => void;
   'thinking:start': () => void;
   'thinking:end': () => void;
 }
-
 
 // Agent configuration
 export interface AgentConfig {
   apiKey: string;
   model?: string;
   instructions?: string;
-  tools?: Tool<z.ZodTypeAny, z.ZodTypeAny>[];
-  maxSteps?: number;
+  maxToolRounds?: number;
 }
 
-// The Agent class - runs independently of any UI
+// The Agent class - uses OpenRouter SDK callModel() with automatic tool execution
 export class Agent extends EventEmitter<AgentEvents> {
   private client: OpenRouter;
-  private messages: Message[] = [];
-  private config: Required<Omit<AgentConfig, 'apiKey'>> & { apiKey: string };
+  private history: Message[] = [];
+  private tools: ReturnType<typeof createTools>;
+  private config: {
+    model: string;
+    instructions: string;
+    maxToolRounds: number;
+  };
 
   constructor(config: AgentConfig) {
     super();
     this.client = new OpenRouter({ apiKey: config.apiKey });
     this.config = {
-      apiKey: config.apiKey,
-      model: config.model ?? 'openrouter/auto',
-      instructions: config.instructions ?? 'You are a helpful assistant.',
-      tools: config.tools ?? [],
-      maxSteps: config.maxSteps ?? 5,
+      model: config.model ?? 'openai/gpt-4o',
+      instructions: config.instructions ?? 'You are a skilled coding assistant.',
+      maxToolRounds: config.maxToolRounds ?? 50,
     };
+    // Create tools with event callbacks wired to this agent's emitter
+    this.tools = createTools({
+      onCall: (name, args) => this.emit('tool:call', name, args),
+      onResult: (name, result) => this.emit('tool:result', name, result),
+    });
   }
 
-  // Get conversation history
   getMessages(): Message[] {
-    return [...this.messages];
+    return [...this.history];
   }
 
-  // Clear conversation
   clearHistory(): void {
-    this.messages = [];
+    this.history = [];
   }
 
-  // Add a system message
   setInstructions(instructions: string): void {
     this.config.instructions = instructions;
   }
 
-  // Register additional tools at runtime
-  addTool(newTool: Tool<z.ZodTypeAny, z.ZodTypeAny>): void {
-    this.config.tools.push(newTool);
-  }
-
-  // Send a message and get streaming response using items-based model
-  // Items are emitted multiple times with the same ID but progressively updated content
-  // Replace items by their ID rather than accumulating chunks
   async send(content: string): Promise<string> {
     const userMessage: Message = { role: 'user', content };
-    this.messages.push(userMessage);
+    this.history.push(userMessage);
     this.emit('message:user', userMessage);
     this.emit('thinking:start');
+    this.emit('stream:start');
 
     try {
+      // callModel() handles the entire tool execution loop
       const result = this.client.callModel({
         model: this.config.model,
         instructions: this.config.instructions,
-        input: this.messages.map((m) => ({ role: m.role, content: m.content })),
-        tools: this.config.tools.length > 0 ? this.config.tools : undefined,
-        stopWhen: [stepCountIs(this.config.maxSteps)],
+        input: this.history.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content })),
+        tools: this.tools,
       });
 
-      this.emit('stream:start');
+      // Use getItemsStream() to see ALL items (messages, tool calls, etc.)
+      // Items are emitted multiple times with same ID but progressively updated content
       let fullText = '';
+      const seenToolCalls = new Set<string>();
+      const completedToolCalls = new Set<string>();
 
-      // Use getItemsStream() for items-based streaming (recommended)
-      // Each item emission is complete - replace by ID, don't accumulate
       for await (const item of result.getItemsStream()) {
-        // Emit the item for UI state management (use Map keyed by item.id)
-        this.emit('item:update', item);
-
-        switch (item.type) {
-          case 'message':
-            // Message items contain progressively updated content
-            const textContent = item.content?.find((c: { type: string }) => c.type === 'output_text');
-            if (textContent && 'text' in textContent) {
-              const newText = textContent.text;
-              if (newText !== fullText) {
-                const delta = newText.slice(fullText.length);
-                fullText = newText;
-                this.emit('stream:delta', delta, fullText);
+        if (item.type === 'function_call') {
+          // Tool call item - emit events for UI indicators
+          const callId = item.callId;
+          if (!seenToolCalls.has(callId)) {
+            seenToolCalls.add(callId);
+            // Parse the arguments safely
+            let args: unknown = {};
+            try {
+              args = item.arguments ? JSON.parse(item.arguments) : {};
+            } catch {
+              args = { raw: item.arguments };
+            }
+            this.emit('tool:call', item.name, args);
+          }
+        } else if (item.type === 'function_call_output') {
+          // Tool result - mark as complete
+          const callId = (item as { callId?: string }).callId;
+          if (callId && !completedToolCalls.has(callId)) {
+            completedToolCalls.add(callId);
+            this.emit('tool:result', 'tool', (item as { output?: string }).output);
+          }
+        } else if (item.type === 'message') {
+          // Message item - extract text content and stream it
+          const messageItem = item as { content?: Array<{ type: string; text?: string }> };
+          if (messageItem.content) {
+            let currentText = '';
+            for (const part of messageItem.content) {
+              if (part.type === 'output_text' && part.text) {
+                currentText += part.text;
               }
             }
-            break;
-          case 'function_call':
-            // Function call arguments stream progressively
-            if (item.status === 'completed') {
-              this.emit('tool:call', item.name, JSON.parse(item.arguments || '{}'));
+            // Emit delta for new text
+            if (currentText.length > fullText.length) {
+              const delta = currentText.slice(fullText.length);
+              fullText = currentText;
+              this.emit('stream:delta', delta, fullText);
             }
-            break;
-          case 'function_call_output':
-            this.emit('tool:result', item.callId, item.output);
-            break;
-          case 'reasoning':
-            // Extended thinking/reasoning content
-            const reasoningText = item.content?.find((c: { type: string }) => c.type === 'reasoning_text');
-            if (reasoningText && 'text' in reasoningText) {
-              this.emit('reasoning:update', reasoningText.text);
-            }
-            break;
-          // Additional item types: web_search_call, file_search_call, image_generation_call
+          }
         }
-      }
-
-      // Get final text if streaming didn't capture it
-      if (!fullText) {
-        fullText = await result.getText();
       }
 
       this.emit('stream:end', fullText);
 
       const assistantMessage: Message = { role: 'assistant', content: fullText };
-      this.messages.push(assistantMessage);
+      this.history.push(assistantMessage);
       this.emit('message:assistant', assistantMessage);
 
       return fullText;
@@ -261,209 +302,350 @@ export class Agent extends EventEmitter<AgentEvents> {
       this.emit('thinking:end');
     }
   }
-
-  // Send without streaming (simpler for programmatic use)
-  async sendSync(content: string): Promise<string> {
-    const userMessage: Message = { role: 'user', content };
-    this.messages.push(userMessage);
-    this.emit('message:user', userMessage);
-
-    try {
-      const result = this.client.callModel({
-        model: this.config.model,
-        instructions: this.config.instructions,
-        input: this.messages.map((m) => ({ role: m.role, content: m.content })),
-        tools: this.config.tools.length > 0 ? this.config.tools : undefined,
-        stopWhen: [stepCountIs(this.config.maxSteps)],
-      });
-
-      const fullText = await result.getText();
-      const assistantMessage: Message = { role: 'assistant', content: fullText };
-      this.messages.push(assistantMessage);
-      this.emit('message:assistant', assistantMessage);
-
-      return fullText;
-    } catch (err) {
-      const error = err instanceof Error ? err : new Error(String(err));
-      this.emit('error', error);
-      throw error;
-    }
-  }
 }
 
-// Factory function for easy creation
+// Factory function
 export function createAgent(config: AgentConfig): Agent {
   return new Agent(config);
 }
 ```
 
-## Step 2: Define Tools
+---
 
-Create `src/tools.ts`:
+### Step 6: Create src/tools.ts
+
+Tools use Zod schemas for type-safe parameters. The SDK automatically validates args against the schema before calling `execute`. Callbacks notify the UI about tool activity.
 
 ```typescript
+import { z } from 'zod/v4';
 import { tool } from '@openrouter/sdk';
-import { z } from 'zod';
+import * as fs from 'fs/promises';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+import { glob } from 'glob';
 
-export const timeTool = tool({
-  name: 'get_current_time',
-  description: 'Get the current date and time',
-  inputSchema: z.object({
-    timezone: z.string().optional().describe('Timezone (e.g., "UTC", "America/New_York")'),
-  }),
-  execute: async ({ timezone }) => {
-    return {
-      time: new Date().toLocaleString('en-US', { timeZone: timezone || 'UTC' }),
-      timezone: timezone || 'UTC',
-    };
-  },
-});
+const execAsync = promisify(exec);
 
-export const calculatorTool = tool({
-  name: 'calculate',
-  description: 'Perform mathematical calculations',
-  inputSchema: z.object({
-    expression: z.string().describe('Math expression (e.g., "2 + 2", "sqrt(16)")'),
-  }),
-  execute: async ({ expression }) => {
-    // Simple safe eval for basic math
-    const sanitized = expression.replace(/[^0-9+\-*/().\s]/g, '');
-    const result = Function(`"use strict"; return (${sanitized})`)();
-    return { expression, result };
-  },
-});
-
-export const defaultTools = [timeTool, calculatorTool];
-```
-
-## Step 3: Headless Usage (No UI)
-
-Create `src/headless.ts` - use the agent programmatically:
-
-```typescript
-import { createAgent } from './agent.js';
-import { defaultTools } from './tools.js';
-
-async function main() {
-  const agent = createAgent({
-    apiKey: process.env.OPENROUTER_API_KEY!,
-    model: 'openrouter/auto',
-    instructions: 'You are a helpful assistant with access to tools.',
-    tools: defaultTools,
-  });
-
-  // Hook into events
-  agent.on('thinking:start', () => console.log('\n🤔 Thinking...'));
-  agent.on('tool:call', (name, args) => console.log(`🔧 Using ${name}:`, args));
-  agent.on('stream:delta', (delta) => process.stdout.write(delta));
-  agent.on('stream:end', () => console.log('\n'));
-  agent.on('error', (err) => console.error('❌ Error:', err.message));
-
-  // Interactive loop
-  const readline = await import('readline');
-  const rl = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-  });
-
-  console.log('Agent ready. Type your message (Ctrl+C to exit):\n');
-
-  const prompt = () => {
-    rl.question('You: ', async (input) => {
-      if (!input.trim()) {
-        prompt();
-        return;
-      }
-      await agent.send(input);
-      prompt();
-    });
-  };
-
-  prompt();
+// Callbacks for tool event notifications
+export interface ToolCallbacks {
+  onCall?: (name: string, args: unknown) => void;
+  onResult?: (name: string, result: unknown) => void;
 }
 
-main().catch(console.error);
+// Lightweight HTML-to-text helper (no external dependencies)
+function htmlToText(html: string): string {
+  return html
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<nav[\s\S]*?<\/nav>/gi, '')
+    .replace(/<footer[\s\S]*?<\/footer>/gi, '')
+    .replace(/<header[\s\S]*?<\/header>/gi, '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function extractTitle(html: string): string {
+  const match = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  return match ? match[1].trim() : '';
+}
+
+// Create all tools using the SDK's tool() helper
+// Returns properly typed Tool[] for OpenRouter SDK callModel()
+export function createTools(callbacks?: ToolCallbacks) {
+  const call = (name: string, args: unknown) => callbacks?.onCall?.(name, args);
+  const done = <T>(name: string, result: T): T => { callbacks?.onResult?.(name, result); return result; };
+
+  return [
+    tool({
+      name: 'list_files',
+      description: 'List files in a directory to understand project structure',
+      inputSchema: z.object({
+        path: z.string().default('.').describe('Directory to search'),
+        recursive: z.boolean().default(false).describe('List recursively'),
+      }),
+      execute: async (params) => {
+        call('list_files', params);
+        try {
+          const files = await glob(params.recursive ? '**/*' : '*', {
+            cwd: params.path,
+            nodir: false,
+            ignore: ['**/node_modules/**', '**/.git/**', '**/dist/**'],
+          });
+          return done('list_files', { files: files.slice(0, 100), count: files.length });
+        } catch (e) {
+          return done('list_files', { error: e instanceof Error ? e.message : String(e) });
+        }
+      },
+    }),
+
+    tool({
+      name: 'read_file',
+      description: 'Read the contents of a specific file',
+      inputSchema: z.object({
+        filepath: z.string().describe('Path to the file to read'),
+      }),
+      execute: async (params) => {
+        call('read_file', params);
+        try {
+          const content = await fs.readFile(params.filepath, 'utf-8');
+          return done('read_file', { filepath: params.filepath, content, length: content.length });
+        } catch (e) {
+          return done('read_file', { error: `Failed to read ${params.filepath}: ${e instanceof Error ? e.message : e}` });
+        }
+      },
+    }),
+
+    tool({
+      name: 'edit_file',
+      description: 'Make targeted edits to a file by replacing specific text. Use this instead of write_file when you only need to change part of a file.',
+      inputSchema: z.object({
+        filepath: z.string().describe('Path to the file to edit'),
+        old_string: z.string().describe('The exact text to find and replace (must match exactly)'),
+        new_string: z.string().describe('The replacement text'),
+        replace_all: z.boolean().default(false).describe('Replace all occurrences instead of just the first'),
+      }),
+      execute: async (params) => {
+        call('edit_file', params);
+        try {
+          const content = await fs.readFile(params.filepath, 'utf-8');
+          if (!content.includes(params.old_string)) {
+            return done('edit_file', { error: `old_string not found in ${params.filepath}. Make sure it matches exactly, including whitespace and indentation.` });
+          }
+          const occurrences = content.split(params.old_string).length - 1;
+          if (occurrences > 1 && !params.replace_all) {
+            return done('edit_file', { error: `old_string found ${occurrences} times in ${params.filepath}. Provide more context to make it unique, or set replace_all to true.` });
+          }
+          const updated = params.replace_all
+            ? content.replaceAll(params.old_string, params.new_string)
+            : content.replace(params.old_string, params.new_string);
+          await fs.writeFile(params.filepath, updated, 'utf-8');
+          return done('edit_file', { success: true, filepath: params.filepath, replacements: params.replace_all ? occurrences : 1 });
+        } catch (e) {
+          return done('edit_file', { error: `Failed to edit ${params.filepath}: ${e instanceof Error ? e.message : e}` });
+        }
+      },
+    }),
+
+    tool({
+      name: 'write_file',
+      description: 'Write content to a file. Overwrites existing content.',
+      inputSchema: z.object({
+        filepath: z.string().describe('Path to the file to write'),
+        content: z.string().describe('Content to write'),
+      }),
+      execute: async (params) => {
+        call('write_file', params);
+        try {
+          await fs.writeFile(params.filepath, params.content, 'utf-8');
+          return done('write_file', { success: true, filepath: params.filepath, bytesWritten: params.content.length });
+        } catch (e) {
+          return done('write_file', { error: `Failed to write ${params.filepath}: ${e instanceof Error ? e.message : e}` });
+        }
+      },
+    }),
+
+    tool({
+      name: 'run_command',
+      description: 'Execute a shell command (e.g., git, npm test, ls)',
+      inputSchema: z.object({
+        command: z.string().describe('The shell command to execute'),
+      }),
+      execute: async (params) => {
+        call('run_command', params);
+        try {
+          const { stdout, stderr } = await execAsync(params.command);
+          return done('run_command', { command: params.command, stdout: stdout.trim().slice(0, 2000), stderr: stderr.trim().slice(0, 500) });
+        } catch (e) {
+          const err = e as { message?: string; stdout?: string; stderr?: string };
+          return done('run_command', { error: 'Command failed', message: err.message, stdout: err.stdout?.slice(0, 1000) });
+        }
+      },
+    }),
+
+    tool({
+      name: 'fetch_web_page',
+      description: 'Fetch text content from a URL (useful for reading docs)',
+      inputSchema: z.object({
+        url: z.string().describe('URL to fetch'),
+      }),
+      execute: async (params) => {
+        call('fetch_web_page', params);
+        try {
+          const res = await fetch(params.url);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const html = await res.text();
+          const title = extractTitle(html);
+          const text = htmlToText(html).slice(0, 4000);
+          return done('fetch_web_page', { url: params.url, title, content: text });
+        } catch (e) {
+          return done('fetch_web_page', { error: `Failed to fetch ${params.url}: ${e instanceof Error ? e.message : e}` });
+        }
+      },
+    }),
+
+    tool({
+      name: 'web_search',
+      description: 'Search the internet for information using DuckDuckGo. Returns titles, URLs, and snippets.',
+      inputSchema: z.object({
+        query: z.string().describe('The search query'),
+        num_results: z.number().default(5).describe('Number of results (max 10)'),
+      }),
+      execute: async (params) => {
+        call('web_search', params);
+        const numResults = Math.min(params.num_results, 10);
+        try {
+          const searchUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(params.query)}`;
+          const res = await fetch(searchUrl, {
+            headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36' },
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const html = await res.text();
+          const results: Array<{ title: string; url: string; snippet: string }> = [];
+          const resultBlocks = html.split(/class="result\s/);
+          for (let i = 1; i < resultBlocks.length && results.length < numResults; i++) {
+            const block = resultBlocks[i];
+            const titleMatch = block.match(/class="result__a"[^>]*>([^<]+)</);
+            const hrefMatch = block.match(/class="result__a"\s+href="([^"]+)"/);
+            const snippetMatch = block.match(/class="result__snippet"[^>]*>([\s\S]*?)<\/a>/);
+            const title = titleMatch ? titleMatch[1].trim() : '';
+            let url = hrefMatch ? hrefMatch[1] : '';
+            if (url.startsWith('//')) url = `https:${url}`;
+            const snippet = snippetMatch ? htmlToText(snippetMatch[1]).slice(0, 200) : '';
+            if (title && url) results.push({ title, url, snippet });
+          }
+          return done('web_search', { query: params.query, results, count: results.length });
+        } catch (e) {
+          return done('web_search', { error: `Search failed: ${e instanceof Error ? e.message : e}` });
+        }
+      },
+    }),
+  ];
+}
 ```
 
-Run headless: `OPENROUTER_API_KEY=sk-or-... npm run start:headless`
+---
 
-## Step 4: Ink TUI (Optional Interface)
+### Step 7: Create src/cli.tsx
 
-Create `src/cli.tsx` - a beautiful terminal UI that uses the agent with items-based streaming:
+A polished terminal interface with ASCII art banner, streaming text, and tool call indicators.
 
-```tsx
+```typescript
+import 'dotenv/config';
 import React, { useState, useEffect, useCallback } from 'react';
-import { render, Box, Text, useInput, useApp } from 'ink';
-import type { StreamableOutputItem } from '@openrouter/sdk';
-import { createAgent, type Agent, type Message } from './agent.js';
-import { defaultTools } from './tools.js';
+import { render, Box, Text, useInput, useApp, useStdout } from 'ink';
+import { createAgent, type Message } from './agent.js';
+// ═══════════════════════════════════════════════════════════════════════════════
+// Simple markdown cleaner for terminal display
+// ═══════════════════════════════════════════════════════════════════════════════
+function formatMarkdown(text: string): string {
+  return text
+    // Headers: ## Header → ▓ Header
+    .replace(/^### (.+)$/gm, '\n░ $1')
+    .replace(/^## (.+)$/gm, '\n▓ $1')
+    .replace(/^# (.+)$/gm, '\n█ $1 █')
+    // Bold: **text** → text (remove markers)
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    // Italic: *text* or _text_ → text
+    .replace(/\*([^*]+)\*/g, '$1')
+    .replace(/_([^_]+)_/g, '$1')
+    // Bullet points: * item or - item → • item
+    .replace(/^[\s]*[-*]\s+/gm, '  • ')
+    // Code blocks: ```code``` → just the code
+    .replace(/```[\w]*\n?([\s\S]*?)```/g, '\n$1\n')
+    // Inline code: `code` → code
+    .replace(/`([^`]+)`/g, '$1')
+    // Links: [text](url) → text
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    // Clean up extra newlines
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
 
-// Initialize agent (runs independently of UI)
+// ═══════════════════════════════════════════════════════════════════════════════
+// ASCII Banner
+// ═══════════════════════════════════════════════════════════════════════════════
+const BANNER = `
+ ██████╗ ██████╗ ███████╗███╗   ██╗██████╗  ██████╗ ██╗   ██╗████████╗███████╗██████╗
+██╔═══██╗██╔══██╗██╔════╝████╗  ██║██╔══██╗██╔═══██╗██║   ██║╚══██╔══╝██╔════╝██╔══██╗
+██║   ██║██████╔╝█████╗  ██╔██╗ ██║██████╔╝██║   ██║██║   ██║   ██║   █████╗  ██████╔╝
+██║   ██║██╔═══╝ ██╔══╝  ██║╚██╗██║██╔══██╗██║   ██║██║   ██║   ██║   ██╔══╝  ██╔══██╗
+╚██████╔╝██║     ███████╗██║ ╚████║██║  ██║╚██████╔╝╚██████╔╝   ██║   ███████╗██║  ██║
+ ╚═════╝ ╚═╝     ╚══════╝╚═╝  ╚═══╝╚═╝  ╚═╝ ╚═════╝  ╚═════╝    ╚═╝   ╚══════╝╚═╝  ╚═╝`;
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Initialization
+// ═══════════════════════════════════════════════════════════════════════════════
+if (!process.env.OPENROUTER_API_KEY) {
+  console.error('\n\x1b[31m✖ Error: OPENROUTER_API_KEY required\x1b[0m');
+  console.error('\x1b[90mCreate a .env file with: OPENROUTER_API_KEY=your-key-here\x1b[0m\n');
+  process.exit(1);
+}
+
 const agent = createAgent({
-  apiKey: process.env.OPENROUTER_API_KEY!,
-  model: 'openrouter/auto',
-  instructions: 'You are a helpful assistant. Be concise.',
-  tools: defaultTools,
+  apiKey: process.env.OPENROUTER_API_KEY,
+  model: 'openai/gpt-4o',
+  instructions: `You are an autonomous coding agent. You can read files, write code, run commands, search the web, and read documentation.
+
+IMPORTANT: After using tools, ALWAYS provide a summary of what you found and your insights. Don't just call tools and stop - synthesize the information into a helpful response.
+
+When presenting information:
+- Use markdown formatting for readability
+- Use bullet points for lists
+- Use code blocks for code
+- Be concise but thorough`,
+  maxToolRounds: 50,
 });
 
-function ChatMessage({ message }: { message: Message }) {
-  const isUser = message.role === 'user';
+// ═══════════════════════════════════════════════════════════════════════════════
+// Types
+// ═══════════════════════════════════════════════════════════════════════════════
+interface ToolCallInfo { name: string; status: 'running' | 'complete'; args?: string; }
+interface DisplayMessage { role: 'user' | 'assistant'; content: string; timestamp: Date; }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Components
+// ═══════════════════════════════════════════════════════════════════════════════
+function Header() {
+  const { stdout } = useStdout();
+  const width = stdout?.columns ?? 100;
+
+  if (width >= 95) {
+    return (
+      <Box flexDirection="column" marginBottom={1}>
+        <Text color="cyan">{BANNER}</Text>
+        <Box marginTop={1}>
+          <Text color="gray">━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</Text>
+        </Box>
+        <Box>
+          <Text color="gray"> Coding Agent </Text>
+          <Text color="magenta">• </Text>
+          <Text color="gray">Model: </Text>
+          <Text color="cyan">gpt-4o</Text>
+          <Text color="magenta"> • </Text>
+          <Text color="gray">Press </Text>
+          <Text color="yellow">ESC</Text>
+          <Text color="gray"> to exit</Text>
+        </Box>
+      </Box>
+    );
+  }
   return (
     <Box flexDirection="column" marginBottom={1}>
-      <Text bold color={isUser ? 'cyan' : 'green'}>
-        {isUser ? '▶ You' : '◀ Assistant'}
-      </Text>
-      <Text wrap="wrap">{message.content}</Text>
+      <Box><Text bold color="cyan">◆ OPENROUTER</Text><Text color="gray"> Coding Agent</Text></Box>
+      <Text color="gray">─────────────────────────────────────────</Text>
     </Box>
   );
 }
 
-// Render streaming items by type using the items-based pattern
-function ItemRenderer({ item }: { item: StreamableOutputItem }) {
-  switch (item.type) {
-    case 'message': {
-      const textContent = item.content?.find((c: { type: string }) => c.type === 'output_text');
-      const text = textContent && 'text' in textContent ? textContent.text : '';
-      return (
-        <Box flexDirection="column" marginBottom={1}>
-          <Text bold color="green">◀ Assistant</Text>
-          <Text wrap="wrap">{text}</Text>
-          {item.status !== 'completed' && <Text color="gray">▌</Text>}
-        </Box>
-      );
-    }
-    case 'function_call':
-      return (
-        <Text color="yellow">
-          {item.status === 'completed' ? '  ✓' : '  🔧'} {item.name}
-          {item.status === 'in_progress' && '...'}
-        </Text>
-      );
-    case 'reasoning': {
-      const reasoningText = item.content?.find((c: { type: string }) => c.type === 'reasoning_text');
-      const text = reasoningText && 'text' in reasoningText ? reasoningText.text : '';
-      return (
-        <Box flexDirection="column" marginBottom={1}>
-          <Text bold color="magenta">💭 Thinking</Text>
-          <Text wrap="wrap" color="gray">{text}</Text>
-        </Box>
-      );
-    }
-    default:
-      return null;
-  }
-}
-
-function InputField({
-  value,
-  onChange,
-  onSubmit,
-  disabled,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-  onSubmit: () => void;
-  disabled: boolean;
+function InputBox({ value, onChange, onSubmit, disabled }: {
+  value: string; onChange: (v: string) => void; onSubmit: () => void; disabled: boolean;
 }) {
   useInput((input, key) => {
     if (disabled) return;
@@ -471,98 +653,116 @@ function InputField({
     else if (key.backspace || key.delete) onChange(value.slice(0, -1));
     else if (input && !key.ctrl && !key.meta) onChange(value + input);
   });
-
   return (
-    <Box>
-      <Text color="yellow">{'> '}</Text>
+    <Box borderStyle="round" borderColor={disabled ? 'gray' : 'cyan'} paddingX={1}>
+      <Text color={disabled ? 'gray' : 'green'}>❯ </Text>
       <Text>{value}</Text>
-      <Text color="gray">{disabled ? ' ···' : '█'}</Text>
+      {!disabled && <Text color="cyan">█</Text>}
+      {disabled && <Text color="gray"> thinking...</Text>}
     </Box>
   );
 }
 
+function ToolCallDisplay({ tools }: { tools: ToolCallInfo[] }) {
+  if (!tools.length) return null;
+  return (
+    <Box flexDirection="column" marginY={1} paddingLeft={2}>
+      {tools.map((tc, i) => (
+        <Box key={i}>
+          <Text color={tc.status === 'complete' ? 'green' : 'yellow'}>
+            {tc.status === 'complete' ? '✓' : '⚡'}
+          </Text>
+          <Text color="gray"> {tc.name}</Text>
+          {tc.args && <Text color="gray" dimColor> {tc.args.slice(0, 40)}...</Text>}
+        </Box>
+      ))}
+    </Box>
+  );
+}
+
+function MessageDisplay({ msg }: { msg: DisplayMessage }) {
+  const isUser = msg.role === 'user';
+  const time = msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  // Apply markdown formatting to assistant messages only
+  const displayContent = isUser ? msg.content : formatMarkdown(msg.content);
+  return (
+    <Box flexDirection="column" marginBottom={1}>
+      <Box>
+        <Text bold color={isUser ? 'blue' : 'green'}>{isUser ? '● You' : '◆ Assistant'}</Text>
+        <Text color="gray" dimColor> {time}</Text>
+      </Box>
+      <Box paddingLeft={2}><Text wrap="wrap">{displayContent}</Text></Box>
+    </Box>
+  );
+}
+
+function StatusBar({ status }: { status: string }) {
+  return <Box marginTop={1}><Text color="gray">─ </Text><Text color="cyan">{status}</Text><Text color="gray"> ─</Text></Box>;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Main App
+// ═══════════════════════════════════════════════════════════════════════════════
 function App() {
   const { exit } = useApp();
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  // Use Map keyed by item ID for efficient React state updates (items-based pattern)
-  const [items, setItems] = useState<Map<string, StreamableOutputItem>>(new Map());
+  const [toolCalls, setToolCalls] = useState<ToolCallInfo[]>([]);
+  const [streamingText, setStreamingText] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [status, setStatus] = useState('Ready');
 
-  useInput((_, key) => {
-    if (key.escape) exit();
-  });
+  useInput((_, key) => { if (key.escape) exit(); });
 
-  // Subscribe to agent events using items-based streaming
   useEffect(() => {
-    const onThinkingStart = () => {
-      setIsLoading(true);
-      setItems(new Map()); // Clear items for new response
+    const onStart = () => { setIsLoading(true); setToolCalls([]); setStreamingText(''); setError(null); setStatus('Processing...'); };
+    const onDelta = (_d: string, acc: string) => { setStreamingText(acc); setStatus('Streaming...'); };
+    const onToolCall = (name: string, args: unknown) => {
+      setToolCalls(prev => [...prev, { name, status: 'running', args: JSON.stringify(args) }]);
+      setStatus(`Running ${name}...`);
     };
-
-    // Items-based streaming: replace items by ID, don't accumulate
-    const onItemUpdate = (item: StreamableOutputItem) => {
-      setItems((prev) => new Map(prev).set(item.id, item));
+    const onToolResult = () => setToolCalls(prev => prev.map(tc => tc.status === 'running' ? { ...tc, status: 'complete' as const } : tc));
+    const onDone = () => {
+      setMessages(agent.getMessages().map(m => ({ role: m.role as 'user' | 'assistant', content: m.content, timestamp: new Date() })));
+      setToolCalls([]); setStreamingText(''); setIsLoading(false); setStatus('Ready');
     };
+    const onError = (err: Error) => { setError(err.message); setIsLoading(false); setStatus('Error'); };
 
-    const onMessageAssistant = () => {
-      setMessages(agent.getMessages());
-      setItems(new Map()); // Clear streaming items
-      setIsLoading(false);
-    };
-
-    const onError = (err: Error) => {
-      setIsLoading(false);
-    };
-
-    agent.on('thinking:start', onThinkingStart);
-    agent.on('item:update', onItemUpdate);
-    agent.on('message:assistant', onMessageAssistant);
+    agent.on('thinking:start', onStart);
+    agent.on('stream:delta', onDelta);
+    agent.on('tool:call', onToolCall);
+    agent.on('tool:result', onToolResult);
+    agent.on('message:assistant', onDone);
     agent.on('error', onError);
-
-    return () => {
-      agent.off('thinking:start', onThinkingStart);
-      agent.off('item:update', onItemUpdate);
-      agent.off('message:assistant', onMessageAssistant);
-      agent.off('error', onError);
-    };
+    return () => { agent.off('thinking:start', onStart); agent.off('stream:delta', onDelta); agent.off('tool:call', onToolCall); agent.off('tool:result', onToolResult); agent.off('message:assistant', onDone); agent.off('error', onError); };
   }, []);
 
-  const sendMessage = useCallback(async () => {
+  const send = useCallback(async () => {
     if (!input.trim() || isLoading) return;
     const text = input.trim();
     setInput('');
-    setMessages((prev) => [...prev, { role: 'user', content: text }]);
-    await agent.send(text);
+    setMessages(prev => [...prev, { role: 'user', content: text, timestamp: new Date() }]);
+    try { await agent.send(text); } catch (e) { setError(e instanceof Error ? e.message : String(e)); setIsLoading(false); }
   }, [input, isLoading]);
 
   return (
-    <Box flexDirection="column" padding={1}>
-      <Box marginBottom={1}>
-        <Text bold color="magenta">🤖 OpenRouter Agent</Text>
-        <Text color="gray"> (Esc to exit)</Text>
+    <Box flexDirection="column" paddingX={1} paddingY={1}>
+      <Header />
+      <Box flexDirection="column" flexGrow={1}>
+        {messages.map((msg, i) => <MessageDisplay key={i} msg={msg} />)}
+        <ToolCallDisplay tools={toolCalls} />
+        {streamingText && isLoading && (
+          <Box flexDirection="column" marginBottom={1}>
+            <Box><Text bold color="green">◆ Assistant</Text><Text color="yellow"> (streaming...)</Text></Box>
+            <Box paddingLeft={2}><Text wrap="wrap">{streamingText}</Text></Box>
+          </Box>
+        )}
+        {isLoading && !streamingText && !toolCalls.length && <Box marginY={1} paddingLeft={2}><Text color="cyan">◌ </Text><Text color="gray">Thinking...</Text></Box>}
+        {error && <Box marginY={1} paddingLeft={2}><Text color="red">✖ Error: {error}</Text></Box>}
       </Box>
-
-      <Box flexDirection="column" marginBottom={1}>
-        {/* Render completed messages */}
-        {messages.map((msg, i) => (
-          <ChatMessage key={i} message={msg} />
-        ))}
-
-        {/* Render streaming items by type (items-based pattern) */}
-        {Array.from(items.values()).map((item) => (
-          <ItemRenderer key={item.id} item={item} />
-        ))}
-      </Box>
-
-      <Box borderStyle="single" borderColor="gray" paddingX={1}>
-        <InputField
-          value={input}
-          onChange={setInput}
-          onSubmit={sendMessage}
-          disabled={isLoading}
-        />
-      </Box>
+      <StatusBar status={status} />
+      <Box marginTop={1}><InputBox value={input} onChange={setInput} onSubmit={send} disabled={isLoading} /></Box>
     </Box>
   );
 }
@@ -570,283 +770,68 @@ function App() {
 render(<App />);
 ```
 
-Run TUI: `OPENROUTER_API_KEY=sk-or-... npm start`
+---
 
-## Understanding Items-Based Streaming
+### Step 8: Create src/headless.ts
 
-The OpenRouter SDK uses an **items-based streaming model** - a key paradigm where items are emitted multiple times with the same ID but progressively updated content. Instead of accumulating chunks, you **replace items by their ID**.
-
-### How It Works
-
-Each iteration of `getItemsStream()` yields a complete item with updated content:
+Useful for CI/CD pipelines or API integration.
 
 ```typescript
-// Iteration 1: Partial message
-{ id: "msg_123", type: "message", content: [{ type: "output_text", text: "Hello" }] }
-
-// Iteration 2: Updated message (replace, don't append)
-{ id: "msg_123", type: "message", content: [{ type: "output_text", text: "Hello world" }] }
-```
-
-For function calls, arguments stream progressively:
-
-```typescript
-// Iteration 1: Partial arguments
-{ id: "call_456", type: "function_call", name: "get_weather", arguments: "{\"q" }
-
-// Iteration 2: Complete arguments
-{ id: "call_456", type: "function_call", name: "get_weather", arguments: "{\"query\": \"Paris\"}", status: "completed" }
-```
-
-### Why Items Are Better
-
-**Traditional (accumulation required):**
-```typescript
-let text = '';
-for await (const chunk of result.getTextStream()) {
-  text += chunk;  // Manual accumulation
-  updateUI(text);
-}
-```
-
-**Items (complete replacement):**
-```typescript
-const items = new Map<string, StreamableOutputItem>();
-for await (const item of result.getItemsStream()) {
-  items.set(item.id, item);  // Replace by ID
-  updateUI(items);
-}
-```
-
-Benefits:
-- **No manual chunk management** - each item is complete
-- **Handles concurrent outputs** - function calls and messages can stream in parallel
-- **Full TypeScript inference** for all item types
-- **Natural Map-based state** works perfectly with React/UI frameworks
-
-## Extending the Agent
-
-### Add Custom Hooks
-
-```typescript
-const agent = createAgent({ apiKey: '...' });
-
-// Log all events
-agent.on('message:user', (msg) => {
-  saveToDatabase('user', msg.content);
-});
-
-agent.on('message:assistant', (msg) => {
-  saveToDatabase('assistant', msg.content);
-  sendWebhook('new_message', msg);
-});
-
-agent.on('tool:call', (name, args) => {
-  analytics.track('tool_used', { name, args });
-});
-
-agent.on('error', (err) => {
-  errorReporting.capture(err);
-});
-```
-
-### Use with HTTP Server
-
-```typescript
-import express from 'express';
+import 'dotenv/config';
 import { createAgent } from './agent.js';
+import * as readline from 'readline';
 
-const app = express();
-app.use(express.json());
-
-// One agent per session (store in memory or Redis)
-const sessions = new Map<string, Agent>();
-
-app.post('/chat', async (req, res) => {
-  const { sessionId, message } = req.body;
-
-  let agent = sessions.get(sessionId);
-  if (!agent) {
-    agent = createAgent({ apiKey: process.env.OPENROUTER_API_KEY! });
-    sessions.set(sessionId, agent);
+async function main() {
+  if (!process.env.OPENROUTER_API_KEY) {
+    console.error('Error: OPENROUTER_API_KEY environment variable is required');
+    process.exit(1);
   }
 
-  const response = await agent.sendSync(message);
-  res.json({ response, history: agent.getMessages() });
-});
-
-app.listen(3000);
-```
-
-### Use with Discord
-
-```typescript
-import { Client, GatewayIntentBits } from 'discord.js';
-import { createAgent } from './agent.js';
-
-const discord = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages],
-});
-
-const agents = new Map<string, Agent>();
-
-discord.on('messageCreate', async (msg) => {
-  if (msg.author.bot) return;
-
-  let agent = agents.get(msg.channelId);
-  if (!agent) {
-    agent = createAgent({ apiKey: process.env.OPENROUTER_API_KEY! });
-    agents.set(msg.channelId, agent);
-  }
-
-  const response = await agent.sendSync(msg.content);
-  await msg.reply(response);
-});
-
-discord.login(process.env.DISCORD_TOKEN);
-```
-
-## Agent API Reference
-
-### Constructor Options
-
-| Option | Type | Default | Description |
-|--------|------|---------|-------------|
-| apiKey | string | required | OpenRouter API key |
-| model | string | 'openrouter/auto' | Model to use |
-| instructions | string | 'You are a helpful assistant.' | System prompt |
-| tools | Tool[] | [] | Available tools |
-| maxSteps | number | 5 | Max agentic loop iterations |
-
-### Methods
-
-| Method | Returns | Description |
-|--------|---------|-------------|
-| `send(content)` | Promise<string> | Send message with streaming |
-| `sendSync(content)` | Promise<string> | Send message without streaming |
-| `getMessages()` | Message[] | Get conversation history |
-| `clearHistory()` | void | Clear conversation |
-| `setInstructions(text)` | void | Update system prompt |
-| `addTool(tool)` | void | Add tool at runtime |
-
-### Events
-
-| Event | Payload | Description |
-|-------|---------|-------------|
-| `message:user` | Message | User message added |
-| `message:assistant` | Message | Assistant response complete |
-| `item:update` | StreamableOutputItem | Item emitted (replace by ID, don't accumulate) |
-| `stream:start` | - | Streaming started |
-| `stream:delta` | (delta, accumulated) | New text chunk |
-| `stream:end` | fullText | Streaming complete |
-| `tool:call` | (name, args) | Tool being called |
-| `tool:result` | (name, result) | Tool returned result |
-| `reasoning:update` | text | Extended thinking content |
-| `thinking:start` | - | Agent processing |
-| `thinking:end` | - | Agent done processing |
-| `error` | Error | Error occurred |
-
-### Item Types (from getItemsStream)
-
-The SDK uses an items-based streaming model where items are emitted multiple times with the same ID but progressively updated content. Replace items by their ID rather than accumulating chunks.
-
-| Type | Purpose |
-|------|---------|
-| `message` | Assistant text responses |
-| `function_call` | Tool invocations with streaming arguments |
-| `function_call_output` | Results from executed tools |
-| `reasoning` | Extended thinking content |
-| `web_search_call` | Web search operations |
-| `file_search_call` | File search operations |
-| `image_generation_call` | Image generation operations |
-
-## Discovering Models
-
-**Do not hardcode model IDs** - they change frequently. Use the models API:
-
-### Fetch Available Models
-
-```typescript
-interface OpenRouterModel {
-  id: string;
-  name: string;
-  description?: string;
-  context_length: number;
-  pricing: { prompt: string; completion: string };
-  top_provider?: { is_moderated: boolean };
-}
-
-async function fetchModels(): Promise<OpenRouterModel[]> {
-  const res = await fetch('https://openrouter.ai/api/v1/models');
-  const data = await res.json();
-  return data.data;
-}
-
-// Find models by criteria
-async function findModels(filter: {
-  author?: string;      // e.g., 'anthropic', 'openai', 'google'
-  minContext?: number;  // e.g., 100000 for 100k context
-  maxPromptPrice?: number; // e.g., 0.001 for cheap models
-}): Promise<OpenRouterModel[]> {
-  const models = await fetchModels();
-
-  return models.filter((m) => {
-    if (filter.author && !m.id.startsWith(filter.author + '/')) return false;
-    if (filter.minContext && m.context_length < filter.minContext) return false;
-    if (filter.maxPromptPrice) {
-      const price = parseFloat(m.pricing.prompt);
-      if (price > filter.maxPromptPrice) return false;
-    }
-    return true;
+  const agent = createAgent({
+    apiKey: process.env.OPENROUTER_API_KEY,
+    model: 'openai/gpt-4o',
+    instructions: 'You are a capable coding agent. You can inspect files, write code, run tests, and browse the web.',
+    maxToolRounds: 50,
   });
+
+  agent.on('thinking:start', () => console.log('\n🤔 Thinking...'));
+  agent.on('tool:call', (name, args) => console.log(`🔧 Using ${name}:`, JSON.stringify(args)));
+  agent.on('tool:result', (name) => console.log(`  ✅ Result from ${name}`));
+  agent.on('stream:delta', (delta) => process.stdout.write(delta));
+  agent.on('stream:end', () => console.log('\n'));
+  agent.on('error', (err) => console.error('❌ Error:', err.message));
+
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  console.log('🤖 OpenRouter Coding Agent (Headless Mode)\nType your message (Ctrl+C to exit):\n');
+
+  const prompt = () => {
+    rl.question('You: ', async (input) => {
+      if (!input.trim()) { prompt(); return; }
+      try { await agent.send(input); } catch (error) { console.error('Error:', error); }
+      prompt();
+    });
+  };
+  prompt();
 }
 
-// Example: Get latest Claude models
-const claudeModels = await findModels({ author: 'anthropic' });
-console.log(claudeModels.map((m) => m.id));
-
-// Example: Get models with 100k+ context
-const longContextModels = await findModels({ minContext: 100000 });
-
-// Example: Get cheap models
-const cheapModels = await findModels({ maxPromptPrice: 0.0005 });
+main().catch(console.error);
 ```
 
-### Dynamic Model Selection in Agent
+---
 
-```typescript
-// Create agent with dynamic model selection
-const models = await fetchModels();
-const bestModel = models.find((m) => m.id.includes('claude')) || models[0];
+## Running the Agent
 
-const agent = createAgent({
-  apiKey: process.env.OPENROUTER_API_KEY!,
-  model: bestModel.id,  // Use discovered model
-  instructions: 'You are a helpful assistant.',
-});
-```
+1. **Add your API key to `.env`:**
+   ```
+   OPENROUTER_API_KEY=sk-or-v1-xxxxx
+   ```
 
-### Using openrouter/auto
+2. **Run the TUI:**
+   ```bash
+   npm start
+   ```
 
-For simplicity, use `openrouter/auto` which automatically selects the best
-available model for your request:
-
-```typescript
-const agent = createAgent({
-  apiKey: process.env.OPENROUTER_API_KEY!,
-  model: 'openrouter/auto',  // Auto-selects best model
-});
-```
-
-### Models API Reference
-
-- **Endpoint**: `GET https://openrouter.ai/api/v1/models`
-- **Response**: `{ data: OpenRouterModel[] }`
-- **Browse models**: https://openrouter.ai/models
-
-## Resources
-
-- OpenRouter Docs: https://openrouter.ai/docs
-- Models API: https://openrouter.ai/api/v1/models
-- Ink Docs: https://github.com/vadimdemedes/ink
-- Get API Key: https://openrouter.ai/settings/keys
+3. **Or run in headless mode:**
+   ```bash
+   npm run start:headless
+   ```
